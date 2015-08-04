@@ -4,7 +4,7 @@
         "configurable"
     ],
     "companyName": "isabellacmor",
-    "longName": "hexwatch",
+    "longName": "colorwatch",
     "projectType": "native",
     "resources": {
         "media": [
@@ -25,7 +25,7 @@
         ]
     },
     "sdkVersion": "3",
-    "shortName": "hexwatch",
+    "shortName": "colorwatch",
     "targetPlatforms": [
         "basalt"
     ],
