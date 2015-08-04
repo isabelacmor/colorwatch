@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+
+#define DURATION_OF_SECONDS_AFTER_TAP 3
   
 static Window *s_main_window;
 static TextLayer *s_hr_layer;
@@ -10,6 +13,9 @@ static TextLayer *s_sec_layer;
 static TextLayer *s_date_layer;
 static TextLayer *s_battery_layer;
 static Window *windowMain;
+
+bool isShowingSeconds = false;
+time_t timeOfLastTap = 0;
 
 static uint8_t supportedColors[60] = {
   GColorMalachiteARGB8,
@@ -81,18 +87,6 @@ static void battery_handler(BatteryChargeState new_state) {
   text_layer_set_text(s_battery_layer, s_battery_buffer);
 }
 
-float calcLuminance(GColor color) {
-      int r = color.r;
-      int g = color.g;
-      int b = color.b;
-  
-      printf("%d, %d, %d\t", r, g, b);
-      printf("%lf", (r+r+b+g+g+g)/6.0);
-
-      //return (r*0.299f + g*0.587f + b*0.114f) / 256.0;
-      return (r+r+b+g+g+g)/6.0;
-}
-
 static void update_color(struct tm *tick_time) {
   // Update main bg color
   window_set_background_color(windowMain, (GColor)supportedColors[tick_time->tm_min]);
@@ -128,7 +122,6 @@ static void update_time() {
   // Create a long-lived buffer
   static char bufferHr[] = "#00";
   static char bufferMin[] = "00";
-  static char bufferSec[] = "00";
   static char bufferDate[] = "00.00";
 
   // Write the current hours and minutes into the buffer
@@ -141,14 +134,51 @@ static void update_time() {
   }
   
   strftime(bufferMin, sizeof("00"), "%M", tick_time);
-  strftime(bufferSec, sizeof("00"), "%S", tick_time);
   strftime(bufferDate, sizeof("00.00"), "%m.%d", tick_time);
 
   // Display this time on the TextLayer
   text_layer_set_text(s_hr_layer, bufferHr);
   text_layer_set_text(s_min_layer, bufferMin);
-  text_layer_set_text(s_sec_layer, bufferSec);
   text_layer_set_text(s_date_layer, bufferDate);
+
+  static char bufferSec[3];
+  if (isShowingSeconds) {
+    // isShowingSeconds is toggled by a watch bump to save battery.
+    strftime(bufferSec, sizeof("00"), "%S", tick_time);
+    text_layer_set_text(s_sec_layer, bufferSec);
+  } else {
+    // Clear out the seconds field.
+    bufferSec[0] = 0;
+    text_layer_set_text(s_sec_layer, bufferSec);
+  }
+}
+
+static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+  if(isShowingSeconds && (difftime(time(NULL), timeOfLastTap) > DURATION_OF_SECONDS_AFTER_TAP)) {
+    isShowingSeconds = false;
+    tick_timer_service_subscribe(MINUTE_UNIT, tick_handler);
+  }
+
+  update_time();
+  
+  update_color(tick_time);
+}
+
+static void tap_handler(AccelAxisType axis, int32_t direction) {
+  // Save time of last tap.
+  timeOfLastTap = time(NULL);
+  
+  if(!isShowingSeconds) {
+    // Switch to the second_unit timer subscription
+    isShowingSeconds = true;
+      
+    // Immediatley update the time so our tap looks responsive
+    struct tm *tick_time = localtime(&timeOfLastTap);
+    update_time(tick_time);
+
+    // Resubscribe to the tick timer at every second
+    tick_timer_service_subscribe(SECOND_UNIT, tick_handler);
+  }
 }
 
 static void main_window_load(Window *window) {
@@ -222,12 +252,6 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_date_layer);
   text_layer_destroy(s_battery_layer);
 }
-
-static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
-  update_time();
-  
-  update_color(tick_time);
-}
   
 static void init() {
   // Create main Window element and assign to pointer
@@ -248,26 +272,17 @@ static void init() {
   // Subscribe to the Battery State Service
   battery_state_service_subscribe(battery_handler);
 
-
-  // Testing things
-  GColor DARK_COLOR = (GColor)GColorMayGreenARGB8;
-
-  int r = DARK_COLOR.r;
-  int g = DARK_COLOR.g;
-  int b = DARK_COLOR.b;
-  
-  printf("COLOR: %d, %d, %d\t", r, g, b);
-
-  if((((r+r+b+g+g+g)/6.0) >= 1.5)) {
-    printf("LIGHT");
-  } else {
-    printf("DARK");
-  }
+  // Subscribe to gestures
+  accel_tap_service_subscribe(tap_handler);
 }
 
 static void deinit() {
   // Destroy Window
   window_destroy(s_main_window);
+
+  tick_timer_service_unsubscribe();
+  battery_state_service_unsubscribe();
+  accel_tap_service_unsubscribe();
 }
 
 int main(void) {
